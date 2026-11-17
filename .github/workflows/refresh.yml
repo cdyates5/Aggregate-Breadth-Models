@@ -1,0 +1,66 @@
+name: Refresh breadth dashboard
+
+on:
+  schedule:
+    # 22:17 UTC Mon-Fri = after the US close and Yahoo's end-of-day update
+    # (09:17 Melbourne in AEDT, 08:17 in AEST)
+    - cron: "17 22 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      refresh:
+        description: "Ignore the price cache and re-download full history (~6 min)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: refresh-dashboard
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Restore price cache
+        uses: actions/cache/restore@v4
+        with:
+          path: cache
+          key: prices-${{ github.run_id }}
+          restore-keys: prices-
+
+      - name: Rebuild dashboard
+        run: python rebuild.py --out docs/index.html ${{ inputs.refresh && '--refresh' || '' }}
+
+      - name: Save price cache
+        if: success()
+        uses: actions/cache/save@v4
+        with:
+          path: cache
+          key: prices-${{ github.run_id }}
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git add docs/index.html
+          if git diff --cached --quiet; then
+            echo "No change to publish."
+            exit 0
+          fi
+          git commit -m "Refresh breadth dashboard $(date -u +%Y-%m-%d)"
+          git push
